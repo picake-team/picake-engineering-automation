@@ -13,21 +13,20 @@ EC2 상태를 **AWS SSM Run Command**로 점검하고(SSH 키 불필요), AWS �
 
 - **환경**: staging(`api-staging.picakes.com`), production(`api.picakes.com`). 둘 다 `ap-northeast-2`의 EC2 단일 인스턴스이며 SSM Run Command로 접근할 수 있는 인스턴스 프로파일이 연결되어 있습니다.
 - **도구 준비**: 루틴 샌드박스에는 `aws` CLI가 없을 수 있습니다. 없으면 `pip install awscli`로 설치하고, 외부 통신이 프록시를 거치므로 `export AWS_CA_BUNDLE=/root/.ccr/ca-bundle.crt`를 함께 설정합니다(파일이 없으면 생략).
-- **인스턴스 찾기**: ID를 하드코딩하지 말고 매 실행마다 SSM 관리 대상 인스턴스에서 도는 PM2 프로세스 이름으로 환경을 판별합니다(`picake-backend-staging` → staging, `picake-backend-production` → production). 루틴 IAM 유저는 Route53 조회 권한이 없으므로(2026-10-25 확인) 도메인 기반 조회는 쓰지 않습니다.
+- **인스턴스 찾기**: ID를 하드코딩하지 말고 매 실행마다 EC2 `Name` 태그로 조회합니다(`picake-backend-staging` → staging, `picake-backend-production` → production). 루틴 IAM 유저는 Route53 조회 권한이 없으므로(2026-10-25 확인) 도메인 기반 조회는 쓰지 않습니다.
 
 ```bash
-for ID in $(aws ssm describe-instance-information --query 'InstanceInformationList[].InstanceId' --output text); do
-  CMD_ID=$(aws ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
-    --parameters '{"commands":["(sudo -u ec2-user -i pm2 jlist 2>/dev/null || pm2 jlist) | jq -r \".[].name\""]}' \
-    --query 'Command.CommandId' --output text)
-  sleep 5
-  echo "$ID $(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$ID" \
-    --query StandardOutputContent --output text | tr '\n' ' ')"
-done
-aws ec2 describe-instances --query 'Reservations[].Instances[].[InstanceId,InstanceType,LaunchTime,State.Name]' --output text
+aws ec2 describe-instances --filters "Name=tag:Name,Values=picake-backend-staging,picake-backend-production" \
+  --query 'Reservations[].Instances[].[Tags[?Key==`Name`]|[0].Value,InstanceId,InstanceType,LaunchTime,State.Name]' --output text
 ```
 
-SSM 명령은 root로 실행되므로 PM2 목록은 배포 사용자(`ec2-user`) 기준으로 먼저 조회하고, 실패하면 root 기준으로 조회합니다. 특정이 안 되는 환경은 호스트 지표를 "확인불가"로 표시합니다. `<INSTANCE_ID>`는 이렇게 찾은 값으로 치환합니다. 1번 스크립트의 `pm2 jlist`도 같은 방식으로 조회합니다.
+**대체 절차** — 태그로 찾지 못하면 SSM 관리 대상 인스턴스(`aws ssm describe-instance-information`)마다 아래 명령을 SSM Run Command로 실행해(1번과 같은 send-command/get-command-invocation 방식) PM2 프로세스 이름으로 판별합니다. SSM 명령은 root로 실행되므로 배포 사용자(`ec2-user`) 기준으로 먼저 조회합니다.
+
+```bash
+(sudo -u ec2-user -i pm2 jlist 2>/dev/null || pm2 jlist) | jq -r '.[].name'
+```
+
+그래도 특정이 안 되는 환경은 호스트 지표를 "확인불가"로 표시합니다. `<INSTANCE_ID>`는 이렇게 찾은 값으로 치환합니다. 1번 스크립트의 `pm2 jlist`도 같은 이유로 `ec2-user` 기준으로 조회합니다.
 
 - **AWS 자격증명**: 사람이 실행할 때는 로컬 AWS 프로필을 씁니다. 루틴은 전용 IAM 유저(읽기 전용 + 두 인스턴스 한정 SSM 명령 실행)의 키를 루틴 프롬프트로 받습니다. 어느 쪽이든 값을 로그·결과물·저장소에 남기지 마세요.
 - 코드 수정·커밋은 하지 않습니다 — 순수 모니터링/리포트 작업입니다.
