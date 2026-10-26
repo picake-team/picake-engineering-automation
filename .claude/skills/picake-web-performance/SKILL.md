@@ -237,6 +237,15 @@ jq '(.loadingExperience // .originLoadingExperience) | if . == null or .metrics 
 
 루틴 프롬프트가 "자동 실행 모드"를 지정하면 위 절차를 아래처럼 바꿔 적용합니다. 다른 루틴(데이터 리포트 등)처럼 **상세 내용은 Artifact 대시보드, Discord에는 요약과 링크**를 보냅니다.
 
+### 실행 순서 (반드시 이 순서)
+
+1. PostHog 수집 (1번)
+2. Lighthouse 수집 (2번, 키가 없으면 건너뜀)
+3. 코멘트 작성 (3번)
+4. **Artifact 대시보드 발행** — `dataviz` skill을 로드한 뒤 Artifact 도구를 호출합니다. 도구가 바로 보이지 않으면 `ToolSearch`로 `select:Artifact`를 먼저 로드하세요(PostHog 도구처럼 지연 로드될 수 있습니다). **이 단계를 생략하지 마세요.**
+5. **Discord 전송** — 4번에서 받은 Artifact 링크를 포함해서 보냅니다. 링크는 Discord 전송보다 먼저 있어야 하므로 4번이 5번보다 앞입니다.
+6. 보고
+
 - **질문하지 않음**: 환경은 항상 production, PostHog 필터는 `environment=production`, `app=web-user`, 봇 제외.
 - **PostHog 실패 시**: 도구 호출이 계속 실패하면 "실사용 데이터를 가져오지 못했다"고 알리고 Lighthouse 결과만으로 짧게 보고합니다(color는 주황, 코멘트에 한계 명시).
 - **Lighthouse 실패·키 없음**: 해당 항목을 "확인불가 (이유)"로 표시하고 나머지는 정상 진행합니다.
@@ -270,7 +279,8 @@ jq '(.loadingExperience // .originLoadingExperience) | if . == null or .metrics 
 
 - **color 기준**: 아래 중 하나라도 해당하면 주황, 아니면 초록입니다. ① 표본 10건 이상인 지표 중 🔴가 있음 ② 지난주 대비 20% 이상 나빠진 지표가 있음(표본 10건 이상) ③ Lighthouse 성능 50 미만 또는 SEO 90 미만 ④ 데이터 수집 실패. 표본이 10건 미만인 🔴는 코멘트에서만 언급하고 색에는 반영하지 않습니다. 빨간색은 쓰지 마세요(장애 알림이 아닙니다).
 - 각 field의 `value`는 1024자 이하로 유지합니다(Discord 제한). 길면 표본이 많은 순으로 자릅니다.
-- Artifact 링크는 반드시 `[클릭해서 자세히 보기 →](URL)` 마스킹 링크로 단독 필드에 넣습니다. Artifact 발행이 실패하면 링크 필드를 빼고 footer에 "대시보드 발행 실패"를 적습니다.
+- Artifact 링크는 반드시 `[클릭해서 자세히 보기 →](URL)` 마스킹 링크로 단독 필드에 넣습니다.
+- **Artifact 도구를 실제로 호출했는데 오류가 났을 때만** 링크 필드를 빼고 footer에 "대시보드 발행 실패"를 적습니다. 호출하지 않았거나 도구를 찾지 못했다면 "발행 실패"라고 쓰지 말고, 호출하지 않은 이유(예: "Artifact 도구를 찾을 수 없음")를 그대로 적습니다. 시도하지 않은 것을 실패한 것처럼 보고하지 마세요.
 - HTTP 상태코드가 2xx가 아니면 1회만 재시도하고, 실패하면 에러 내용을 최종 메시지에 남깁니다.
 - 웹훅 URL과 `PSI_API_KEY`는 로그·결과물·Artifact에 노출하지 않습니다.
 - **보고**: 마지막에 PostHog 포함 여부, Lighthouse 포함 여부(건너뛴 이유), Artifact 링크, Discord 전송 결과(HTTP 상태코드)를 세션 로그에 짧게 남깁니다. 코드 수정·커밋은 하지 않습니다.
