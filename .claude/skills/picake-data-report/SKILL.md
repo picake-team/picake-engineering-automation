@@ -37,6 +37,26 @@ PostHog 프로젝트는 **development/staging/production이 하나로 공용**�
 - 기존 저장된 Insight/Dashboard(1번의 "이미 PostHog에 저장된 Insight" 부분)는 이 필터가 안 걸려 있을 수 있으니, 그대로 인용하지 말고 숫자를 재확인하세요.
 - 리포트를 시작하기 전에 한 번씩 `SELECT properties.app, properties.environment, count() FROM events WHERE timestamp >= now() - INTERVAL 30 DAY GROUP BY 1, 2`로 전체 분포를 훑어보면, 새로운 앱/환경이 추가되거나 태깅이 누락된 이벤트가 있는지 빠르게 감지할 수 있습니다.
 
+### 합성(테스트) 접속 제외 (필수, 환경 필터와 같이 항상 건다)
+
+**봇으로 표시되지 않는 합성 접속이 실제 방문자처럼 집계됩니다.** 실제로 2026-10-26의 방문자(고유 사용자)가 73명으로 보였는데, 그중 61명이 합성 접속이었고 실제는 약 12명이었습니다. 원인은 두 가지입니다.
+
+- **웹 성능 점검 루틴의 Lighthouse(PageSpeed Insights)**: 구글 서버에서 `moto g power (2022)`라는 가상 Android 기기로 접속하며, 실행할 때마다 페이지를 여러 번 새로 열어 매번 "새 방문자"가 됩니다.
+- **개발자의 모바일 에뮬레이션·자동화 테스트(Playwright 등)**: 폭 500px 이하의 **데스크톱** 브라우저로 나타납니다. 실제 데스크톱 사용자의 창은 이렇게 좁지 않습니다.
+
+이 둘을 거르는 **HogQL 조건식**(아래 한 줄)을 `environment`·`app` 필터와 함께 **모든 PostHog 조회에** 겁니다.
+
+```
+NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (properties.$device_type = 'Desktop' AND toFloat(properties.$viewport_width) <= 500)
+```
+
+- `query-trends`/`query-funnel` 등 타입이 있는 조회: 최상위 `properties` 배열에 `{"type": "hogql", "key": "<위 조건식>"}`를 환경·앱 필터와 함께 추가합니다. (실제로 2026-10-26 DAU가 68 → 12로 줄어드는 것을 확인했습니다.)
+- `execute-sql`: `WHERE` 절에 `AND <위 조건식>`을 붙입니다.
+- **저장된 Insight 재실행**(아래 "저장된 Insight 기반 확장 지표"): 환경 필터를 추가하는 것과 같은 방식으로 이 조건식도 추가한 뒤 재실행합니다. 저장된 정의에는 이 필터가 없습니다.
+- 한 번이라도 이 필터를 빼면 방문자·페이지뷰·세션·기기·유입 지표가 모두 부풀려집니다. 특히 사용자가 적은 서비스라 합성 접속 몇 건이 비율(예: Android 비중)까지 바꿉니다.
+- **걸러지지 않는 것**: 개발자·팀원이 실제 휴대폰으로 직접 써 본 접속(예: 2026-10-25에 페이지뷰 157건/방문자 10명)은 구분할 방법이 없습니다. 특정 날짜에 페이지뷰만 비정상적으로 많고 방문자가 적으면 "내부 테스트 가능성(추정)"으로 코멘트에 적으세요.
+- DB 관리자 통계(2번)는 이 문제와 무관하지만, 팀 내부 테스트 계정이 회원·주문에 포함되어 있을 수 있습니다. 구분할 근거가 없으면 "내부 테스트 계정 포함 가능"이라고만 적고 임의로 빼지 마세요.
+
 ### $current_url 관련 PII 주의 (2026-08-03 완화됨)
 
 이전에 `/auth/*` 콜백·가입 URL의 쿼리스트링에 실제 이메일·OAuth 코드가 그대로 노출되던 문제가 있었습니다(인기 페이지·유입경로 분석 중 발견). `apps/web-user`·`apps/web-seller`의 `posthog.config.ts`에 `before_send` 훅을 추가해 2026-08-03 배포분부터는 `$current_url`/`$referrer`에서 이런 값이 자동으로 제거됩니다(`/auth/*`는 쿼리스트링 전체 제거, 그 외 경로는 알려진 민감 키만 제거). **그 이전 시점 데이터(과거 pageview, 세션 리플레이)에는 여전히 원문이 남아있을 수 있으니**, 인기 페이지/유입경로 리포트에서 `$current_url`을 직접 노출할 때는 항상 도메인/경로만 쓰고 쿼리스트링은 표시하지 마세요. 세션 리플레이도 `/auth/*`에서는 이제 녹화 자체가 꺼집니다(`stopSessionRecording()`).
@@ -167,7 +187,7 @@ PostHog 프로젝트는 **development/staging/production이 하나로 공용**�
 
 루틴 프롬프트가 "자동 실행 모드"를 지정하면 위 절차를 아래처럼 바꿔 적용합니다.
 
-- **질문하지 않음**: 환경은 항상 production(`https://api.picakes.com`), PostHog 필터는 `environment=production`, `app=web-user`.
+- **질문하지 않음**: 환경은 항상 production(`https://api.picakes.com`), PostHog 필터는 `environment=production`, `app=web-user`, 그리고 **합성(테스트) 접속 제외**(1번).
 - **관리자 통계 인증**: 토큰을 요청하지 말고 루틴 프롬프트의 관리자 API 키를 `X-Admin-Api-Key: <키>` 헤더로 보냅니다. 이 키는 통계 외 admin API에도 접근 가능하므로 로그·결과물에 노출하지 마세요.
 - **PostHog 실패 시**: 도구 호출이 계속 실패하면 PostHog 부분은 건너뛰고 DB 통계만으로 진행하며, 그 사실을 Discord와 최종 보고에 적습니다.
 - **대시보드**: 3번 절차대로 `dataviz` skill을 먼저 로드하고 Artifact를 발행합니다. title `Picake 일일 리포트 · {YYYY-MM-DD}`, favicon 📊. 매번 새 Artifact로 발행해도 됩니다.
