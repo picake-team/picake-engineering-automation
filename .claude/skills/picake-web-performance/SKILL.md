@@ -45,7 +45,7 @@ NOW_KST=$(date '+%Y-%m-%d %H:%M')     # 점검 시각
 리포트에 반드시 적을 **측정 기준** (대시보드 맨 위 카드와 Discord 필드 모두):
 
 - 실사용(PostHog): 이번 구간·직전 구간·어제의 날짜 범위, "완료된 날짜 기준, 실시간 아님", 봇 제외, 점검 시각(`NOW_KST`).
-- Lighthouse: 측정 시각(`NOW_KST`), 모바일 시뮬레이션, 페이지당 1회 측정, 구글 서버에서 실행.
+- Lighthouse: 측정 시각(`NOW_KST`), 모바일 시뮬레이션, 페이지당 3회 측정(중앙값), 구글 서버에서 실행.
 - 구글 사용자 데이터(CrUX): 구글이 집계한 최근 28일(있을 때만).
 
 ### 1-1. 최근 운영 배포 이력과 배포 전후 비교 (자동 조회, 실패해도 계속 진행)
@@ -67,9 +67,10 @@ git for-each-ref --format='%(taggerdate:unix)|%(refname:short)|%(contents:subjec
 ```
 
 - 시각은 KST `MM/DD HH:MM`으로 바꿔 적습니다(태그 시각 = 배포 직후 시각이라 몇 분 이내 오차). **점검 시각 기준 최근 14일의 운영 배포만 최대 5개** 보여 줍니다. 주석 태그가 아닌 가벼운 태그라 시각이 없으면 "시각 확인불가"로 적습니다.
-- 이번 구간 안에 운영 배포가 있으면, 구간 값에는 **배포 전 값이 섞여 있음**을 코멘트에 반드시 적습니다.
+- 각 배포를 **이번 구간(`D7` 00:00 ~ `TODAY` 00:00 KST) 안인지 밖인지** 구분해서 적습니다. 오늘(`TODAY`) 이후의 배포는 구간 **밖**이며, "다음 리포트부터 구간 값에 반영됩니다"라고 적습니다. 구간 안 배포 수를 셀 때 구간 밖 배포를 섞지 마세요(예: 구간이 10/19~10/25이면 10/26 배포는 구간 밖).
+- 구간 **안**에 운영 배포가 있으면, 그 시각 이전 날짜의 값은 배포 전 값이 섞여 있음을 코멘트에 반드시 적습니다. 구간 **밖**의 최근 배포가 있으면 "아직 구간 값에 반영되지 않았다"고 적고, 아래 배포 전후 비교로 대신 확인합니다.
 
-**배포 전후 비교** — 가장 최근 운영 배포가 14일 이내이고 배포 후 6시간 이상 지났을 때만 합니다.
+**배포 전후 비교** — 점검 시각 기준 **배포 후 6시간 이상 지난 운영 배포 중 가장 최근 것**을 기준으로 합니다(14일 이내). 가장 최근 배포가 6시간 미만이어도 그보다 앞선 배포가 조건을 만족하면 그 배포로 비교합니다. 기준 배포 이후에 더 새로운 배포가 있으면 "그 사이 v○○ 배포가 추가됨(변경 요약)"을 함께 적습니다. 조건을 만족하는 배포가 없을 때만 비교를 건너뜁니다.
 
 - `{DEPLOY_UTC}` = 그 배포 태그 시각(`%(taggerdate:unix)`)을 UTC `YYYY-MM-DD HH:MM:SS`로 바꾼 값(`date -u -d "@<unix>" '+%F %T'`).
 - 2-2 전체 p75 쿼리를 두 번 실행합니다. 배포 전 `[DEPLOY_UTC − 7일, DEPLOY_UTC)`, 배포 후 `[DEPLOY_UTC, 지금)`. 기간 조건은 `toDateTime('...', 'UTC')`로 넣고 나머지 필터(합성 접속 제외 포함)는 그대로 둡니다.
@@ -237,30 +238,40 @@ PRODUCT_ID=$(curl -s "https://api.picakes.com/v1/consumer/products?sortBy=latest
   | jq -r '.data.data[0].id // empty')
 STORE_ID=$(curl -s "https://api.picakes.com/v1/consumer/store?page=1&limit=1" \
   | jq -r '.data.data[0].id // empty')
-# 상품: https://picakes.com/product/$PRODUCT_ID  /  스토어: https://picakes.com/store/$STORE_ID
+# 상품: https://picakes.com/product/$PRODUCT_ID  /  스토어: https://picakes.com/store/$STORE_ID (값이 비어 있으면 그 페이지는 건너뜀)
 ```
 
 대시보드에는 어떤 상품·스토어를 쟀는지 이름 대신 **경로 패턴만**(`/product/*`, `/store/*`) 적습니다.
 
-### 3-2. 호출 (성능 + SEO를 한 번에)
+### 3-2. 호출 (성능 + SEO를 한 번에, 페이지당 3회)
+
+Lighthouse는 같은 코드도 돌릴 때마다 값이 크게 흔들립니다(실제로 같은 페이지의 FCP가 0.9초 ↔ 4.1초, 성능이 69 ↔ 56). **페이지당 3회 측정해 중앙값**을 씁니다. 페이지끼리는 병렬로, 한 페이지의 3회는 순차로 돌려 전체 시간을 줄입니다.
 
 ```bash
-curl -s -m 120 -G "https://www.googleapis.com/pagespeedonline/v5/runPagespeed" \
-  --data-urlencode "url=$TARGET_URL" \
-  --data-urlencode "strategy=mobile" \
-  --data-urlencode "category=performance" \
-  --data-urlencode "category=seo" \
-  --data-urlencode "locale=ko" \
-  --data-urlencode "key=$PSI_API_KEY" -o psi.json
+mkdir -p /tmp/psi && cd /tmp/psi
+run_psi() {   # $1=라벨(home|product|store) $2=대상 URL
+  for i in 1 2 3; do
+    curl -s -m 120 -G "https://www.googleapis.com/pagespeedonline/v5/runPagespeed" \
+      --data-urlencode "url=$2" --data-urlencode "strategy=mobile" \
+      --data-urlencode "category=performance" --data-urlencode "category=seo" \
+      --data-urlencode "locale=ko" --data-urlencode "key=$PSI_API_KEY" -o "psi_$1_$i.json"
+  done
+}
+run_psi home "https://picakes.com/" &
+[ -n "$PRODUCT_ID" ] && run_psi product "https://picakes.com/product/$PRODUCT_ID" &
+[ -n "$STORE_ID" ] && run_psi store "https://picakes.com/store/$STORE_ID" &
+wait
 ```
 
-- 한 번에 하나씩 순서대로 호출합니다(호출당 최대 1~2분). 실패하면 1회만 재시도합니다.
-- 응답에 `error`가 있으면(예: 한도 초과, 403) 해당 URL은 "확인불가"로 표시하고 이유를 한 줄로 적습니다. 키 값은 로그·결과물에 남기지 않습니다.
+- 응답에 `error`가 있거나 `lighthouseResult`가 없는 파일은 **그 회차만 제외**합니다. 한 페이지에서 성공한 회차가 1회뿐이면 "1회 측정(참고용)", 0회면 "확인불가(이유)"로 표시합니다. 키 값은 로그·결과물에 남기지 않습니다.
+- 지표(성능·SEO 점수, FCP·LCP·TBT·CLS 등)는 **성공한 회차의 중앙값**(짝수 개면 두 값의 평균)으로 보고합니다. 개선 제안은 3회 중 2회 이상 나온 항목만 남기고 절감 시간은 중앙값으로 씁니다. 미통과 SEO 항목은 한 번이라도 미통과면 표시합니다.
+- 3회 사이의 흔들림이 크면(성능 점수 차이 15점 이상 또는 FCP·LCP 차이 2배 이상) "측정 편차 큼"이라고 밝히고 그 지표로 결론을 내리지 않습니다.
 - 데스크톱 점검은 하지 않습니다(앱이 모바일 WebView).
 
-### 3-3. 뽑을 값
+### 3-3. 뽑을 값 (회차 파일마다 실행해 3-2의 규칙으로 중앙값 계산)
 
 ```bash
+# 예: for f in psi_home_*.json; do jq '...(아래 식)...' "$f"; done
 jq '{
   performance: (.lighthouseResult.categories.performance.score * 100 | round),
   seo: (.lighthouseResult.categories.seo.score * 100 | round),
@@ -286,7 +297,7 @@ jq '{
         inp: .metrics.INTERACTION_TO_NEXT_PAINT,
         cls: .metrics.CUMULATIVE_LAYOUT_SHIFT_SCORE
       } end)
-}' psi.json
+}' "$f"
 ```
 
 - `opportunities`: 절감 예상 시간이 큰 성능 개선 제안 상위 3개. 성능이 나쁜 지표의 **원인 후보**로만 연결해 씁니다.
@@ -350,7 +361,7 @@ jq '{
 1. **헤더**: 제목, 부제(`운영 web-user · 점검 시각 {NOW_KST} KST`), **종합 상태 배지**(🟢 이상 없음 / 🟠 확인 필요, 5-4의 색 기준과 동일).
 2. **측정 기준 카드 (항상 헤더 바로 아래, 접지 않음)**: 1번의 표기를 그대로 사용합니다.
    - 실사용(PostHog): 이번 구간 `MM/DD ~ MM/DD (7일)` · 직전 구간 · 어제 · "완료된 날짜 기준, 실시간 아님" · 봇 제외
-   - Lighthouse: 측정 시각 · 모바일 시뮬레이션 · 페이지당 1회 · 구글 서버
+   - Lighthouse: 측정 시각 · 모바일 시뮬레이션 · 페이지당 3회(중앙값) · 구글 서버
    - 구글 사용자 데이터: 최근 28일 (있을 때만)
    - 운영 배포: 최근 14일 안의 배포 최대 3개 `MM/DD HH:MM · 태그 · 한 줄 요약` (확인불가면 그 사실)
    - 합성 접속 제외: "Lighthouse 가상 기기·폭 500px 이하 데스크톱 제외"
@@ -376,11 +387,11 @@ jq로 아래 구조의 payload를 만들어 루틴 프롬프트의 웹훅 URL로
     color: (아래 기준으로 초록 5763719 / 주황 15105570),
     description: "1줄 핵심 요약 (예: 실사용 속도 대체로 양호 · 모바일 반응 속도(INP)만 확인 필요)",
     fields: [
-      { name: "🗓️ 측정 기준", value: "실사용 {D7 MM/DD}~{D1 MM/DD}(7일, 완료된 날짜 기준·실시간 아님) vs 직전 7일 · 어제 {D1 MM/DD}\nLighthouse {NOW_KST} 1회 측정(모바일)", inline: false },
+      { name: "🗓️ 측정 기준", value: "실사용 {D7 MM/DD}~{D1 MM/DD}(7일, 완료된 날짜 기준·실시간 아님) vs 직전 7일 · 어제 {D1 MM/DD}\nLighthouse {NOW_KST} 3회 측정 중앙값(모바일)", inline: false },
       { name: "🚀 운영 배포", value: "최근 14일 배포 최대 3줄 `MM/DD HH:MM · v태그 · 요약` + 배포 전후 한 줄(조건 충족 시). 확인불가면 \"배포 이력 확인불가\"", inline: false },
       { name: "⚡ 실사용 속도 · 이번 7일 p75", value: "핵심 페이지 3~4줄. 예) 🟢 홈 · LCP 1.7초 · INP 448ms🟡 (표본 6, 참고용)", inline: false },
       { name: "📱 기기별", value: "iOS · Android 한 줄씩 (표본 부족이면 생략 사유)", inline: false },
-      { name: "🔦 Lighthouse · 모바일 (참고용)", value: "홈 성능 N · SEO N / 상품 성능 N · SEO N / 스토어 성능 N · SEO N (확인불가면 이유)", inline: false },
+      { name: "🔦 Lighthouse · 모바일 3회 중앙값 (참고용)", value: "홈 성능 N · SEO N / 상품 성능 N · SEO N / 스토어 성능 N · SEO N (확인불가면 이유)", inline: false },
       { name: "💬 코멘트", value: "핵심 2~3줄 (전체는 대시보드)", inline: false },
       { name: "📊 전체 대시보드", value: "[클릭해서 자세히 보기 →](ARTIFACT_URL)", inline: false }
     ],
