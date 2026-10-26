@@ -218,6 +218,8 @@ NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (propertie
 5. Discord 전송 — 4번에서 받은 Artifact 링크를 포함합니다.
 6. 보고
 
+**DB와 PostHog를 비교해 이상 징후를 쓸 때는 같은 기간끼리만 비교합니다.** DB의 누적(`total`)이나 오래된 건과 PostHog의 최근 30일 이벤트를 비교하면 "트래킹 누락"이라는 오경보가 납니다(실제 사례: DB 주문 누적 1건과 PostHog 30일 `request_reservation` 0건을 비교했지만, DB의 최근 30일 주문(`daily-trends` 합산)은 0건이라 누락이 아니었습니다). 이벤트는 코드에 구현돼 있는지(`apps/web-user`의 `trackEvent`)와 같은 기간의 DB 건수를 먼저 확인하고, 기간이 맞지 않으면 이상 징후로 쓰지 말고 "기간이 달라 비교 불가"라고 적습니다.
+
 필수 단계를 못 한 경우는 **실제로 호출했는데 오류가 났을 때만** 허용되며, 그때는 오류 내용을 Discord와 보고에 그대로 적습니다. 호출하지 않고 "생략했다"고 쓰는 것은 허용되지 않습니다. 푸시 알림은 따로 보내지 않습니다(루틴 설정이 처리합니다).
 
 - **질문하지 않음**: 환경은 항상 production(`https://api.picakes.com`), PostHog 필터는 `environment=production`, `app=web-user`, 그리고 **합성(테스트) 접속 제외**(1번).
