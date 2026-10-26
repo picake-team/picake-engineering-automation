@@ -18,6 +18,7 @@ description: web-user의 로딩·반응 속도와 검색(SEO) 상태를 점검�
 
 - 대상은 항상 **운영(production) `web-user`** 입니다. 검증(staging)은 사용자가 거의 없어 표본이 안 나오고 검색 차단 상태라 측정하지 않습니다.
 - 측정하지 않는 것: 서버·백엔드 API 응답 시간, 클릭 후 화면 전환 시간, 코드·배포 이력. 필요해 보이면 사용자에게 별도 점검이 필요하다고 안내하되, 이 점검이 본 것처럼 쓰지 마세요.
+- 합성(테스트) 접속은 UA·화면 폭으로 걸러내지만(2-1), 개발자가 실제 휴대폰으로 하는 수동 테스트는 걸러지지 않습니다.
 - 앱(Flutter WebView)과 브라우저 접속이 섞여 있습니다. 구글의 사용자 데이터(CrUX)는 Chrome 방문만 집계하므로 WebView 사용자를 대표하지 않습니다.
 
 ## 1. 측정 기준 (가장 먼저 정하고, 리포트에 그대로 적는다)
@@ -47,6 +48,31 @@ NOW_KST=$(date '+%Y-%m-%d %H:%M')     # 점검 시각
 - Lighthouse: 측정 시각(`NOW_KST`), 모바일 시뮬레이션, 페이지당 1회 측정, 구글 서버에서 실행.
 - 구글 사용자 데이터(CrUX): 구글이 집계한 최근 28일(있을 때만).
 
+### 1-1. 최근 운영 배포 이력과 배포 전후 비교 (자동 조회, 실패해도 계속 진행)
+
+날짜 단위 구간만 보면 "이 값이 배포 전 코드의 값인지 후의 값인지" 알 수 없습니다. 웹 레포는 공개라서 **인증 없이** 공개 GitHub API로 운영 배포 이력을 읽을 수 있습니다. 호출이 실패하거나 한도에 걸리면 "배포 이력 확인불가"로 적고 이 단계만 건너뜁니다.
+
+```bash
+API=https://api.github.com/repos/picake-team/picake-engineering-web
+# 최근 성공한 운영 배포 (created_at은 UTC)
+curl -s -m 30 "$API/actions/workflows/deploy-web.yml/runs?per_page=30" \
+  | jq -r '.workflow_runs[] | select(.conclusion=="success" and (.head_branch|startswith("web-user/production-"))) | "\(.created_at) \(.head_branch)"' | head -5
+# 각 태그의 변경 요약(주석 태그 메시지 첫 줄)
+SHA=$(curl -s "$API/git/ref/tags/$TAG" | jq -r '.object.sha')
+curl -s "$API/git/tags/$SHA" | jq -r '.message' | head -1
+```
+
+- 시각은 KST `MM/DD HH:MM`으로 바꿔 적습니다. **점검 시각 기준 최근 14일의 운영 배포만 최대 5개** 보여 줍니다.
+- 이번 구간 안에 운영 배포가 있으면, 구간 값에는 **배포 전 값이 섞여 있음**을 코멘트에 반드시 적습니다.
+
+**배포 전후 비교** — 가장 최근 운영 배포가 14일 이내이고 배포 후 6시간 이상 지났을 때만 합니다.
+
+- `{DEPLOY_UTC}` = 그 배포의 `created_at`(`YYYY-MM-DD HH:MM:SS`, UTC).
+- 2-2 전체 p75 쿼리를 두 번 실행합니다. 배포 전 `[DEPLOY_UTC − 7일, DEPLOY_UTC)`, 배포 후 `[DEPLOY_UTC, 지금)`. 기간 조건은 `toDateTime('...', 'UTC')`로 넣고 나머지 필터(합성 접속 제외 포함)는 그대로 둡니다.
+- 이 비교만 예외로 **날짜 단위가 아니라 "배포 후 ~ 점검 시각"의 실시간 구간**입니다. 리포트에 그렇게 명시합니다.
+- 지표별 배포 후 표본이 3건 미만이면 "배포 후 표본 부족, 다음 리포트에서 다시"로 적고 비교하지 않습니다. 10건 미만이면 참고용입니다.
+- **관찰과 원인을 구분**합니다. "배포 후 INP 값이 낮다(관찰)"는 쓰되 "배포 때문"이라고 단정하지 않습니다(표본 변동·다른 변화 가능).
+
 ## 2. PostHog 웹 바이탈 수집
 
 이 레포의 `.mcp.json`에 `posthog` MCP가 연결되어 있습니다(project id `497749`). `mcp__posthog__exec` 도구로 `execute-sql`을 호출하세요. 이 프로젝트는 development/staging/production과 `web-user`/`web-seller`가 **하나로 공용**이라 아래 필터를 빠뜨리면 숫자가 틀립니다 (배경: [`picake-data-report`](../picake-data-report/SKILL.md) 1번 "환경 필터링").
@@ -55,6 +81,10 @@ NOW_KST=$(date '+%Y-%m-%d %H:%M')     # 점검 시각
 
 - `properties.environment = 'production'` 그리고 `properties.app = 'web-user'`
 - `(properties.$virt_is_bot IS NULL OR properties.$virt_is_bot = false)`: 봇·크롤러 제외. 운영은 AI·검색 크롤러를 허용하고 있어 봇이 웹 바이탈에 섞일 수 있습니다.
+- **합성(테스트) 접속 제외** — 아래 두 줄은 모든 쿼리에 이미 들어 있습니다. 빼지 마세요.
+  - `$raw_user_agent LIKE '%moto g power (2022)%'`: **이 루틴의 Lighthouse(PageSpeed Insights)가 쓰는 가상 기기**입니다. 봇으로 표시되지 않고 실제 Android Chrome 사용자와 똑같이 집계되며, 매 실행마다 3건(홈·상품·스토어)이 느린 가상 환경 값으로 섞입니다.
+  - `$device_type = 'Desktop'` 이면서 `$viewport_width <= 500`: 폭 500px 이하의 데스크톱 브라우저는 개발자 도구의 모바일 에뮬레이션이나 자동화 테스트(Playwright 등)입니다. 실제 데스크톱 사용자의 창이 이렇게 좁은 경우는 사실상 없습니다.
+  - 표본이 작은 서비스라 합성 접속 몇 건만으로도 p75가 크게 흔들립니다. 이 규칙을 지켜도 실제 휴대폰으로 하는 개발자 수동 테스트는 걸러지지 않으니, 특정 시각에 몰린 이상한 값은 "내부 테스트 가능성"으로 언급하세요.
 - 기간은 1번의 날짜로 자릅니다. 아래 쿼리의 `{START}`·`{END}`·`{D14}`·`{D7}`·`{TODAY}`는 `YYYY-MM-DD 00:00:00` 형태의 실제 날짜로 채워 `toDateTime('...', 'Asia/Seoul')`에 넣습니다.
 
 ### 2-2. 전체 p75 (핵심 지표 타일용)
@@ -76,6 +106,8 @@ WHERE event = '$web_vitals'
   AND properties.environment = 'production'
   AND properties.app = 'web-user'
   AND (properties.$virt_is_bot IS NULL OR properties.$virt_is_bot = false)
+  AND NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%')
+  AND NOT (properties.$device_type = 'Desktop' AND toFloat(properties.$viewport_width) <= 500)
   AND timestamp >= toDateTime('{START}', 'Asia/Seoul')
   AND timestamp < toDateTime('{END}', 'Asia/Seoul')
 ```
@@ -101,6 +133,8 @@ WHERE event = '$web_vitals'
   AND properties.environment = 'production'
   AND properties.app = 'web-user'
   AND (properties.$virt_is_bot IS NULL OR properties.$virt_is_bot = false)
+  AND NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%')
+  AND NOT (properties.$device_type = 'Desktop' AND toFloat(properties.$viewport_width) <= 500)
   AND timestamp >= toDateTime('{D14}', 'Asia/Seoul')
   AND timestamp < toDateTime('{TODAY}', 'Asia/Seoul')
 GROUP BY page, period
@@ -125,6 +159,8 @@ WHERE event = '$web_vitals'
   AND properties.environment = 'production'
   AND properties.app = 'web-user'
   AND (properties.$virt_is_bot IS NULL OR properties.$virt_is_bot = false)
+  AND NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%')
+  AND NOT (properties.$device_type = 'Desktop' AND toFloat(properties.$viewport_width) <= 500)
   AND timestamp >= toDateTime('{D7}', 'Asia/Seoul')
   AND timestamp < toDateTime('{TODAY}', 'Asia/Seoul')
 GROUP BY os, device
@@ -148,6 +184,8 @@ WHERE event = '$web_vitals'
   AND properties.environment = 'production'
   AND properties.app = 'web-user'
   AND (properties.$virt_is_bot IS NULL OR properties.$virt_is_bot = false)
+  AND NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%')
+  AND NOT (properties.$device_type = 'Desktop' AND toFloat(properties.$viewport_width) <= 500)
   AND timestamp >= toDateTime('{D7}', 'Asia/Seoul')
   AND timestamp < toDateTime('{TODAY}', 'Asia/Seoul')
 GROUP BY region
@@ -257,6 +295,7 @@ jq '{
 
 1. **한 줄 총평**: 전반적으로 괜찮은지 / 신경 쓸 곳이 있는지.
 2. **지난 구간 대비 눈에 띄는 변화**: 표본 10건 이상이면서 20% 넘게 변한 지표만. 없으면 "큰 변화 없음". 어제 값이 구간 값과 크게 다르면(표본 허용 범위에서) 개선·악화 추세로 언급.
+   - 이번 구간 안에 운영 배포가 있었다면 "어느 날짜 값이 배포 전인지"를 함께 말하고, 1-1의 배포 전후 비교 결과(관찰)를 근거로 씁니다. 배포 직후라 구간 값이 배포 전 값에 끌려가고 있으면 그렇게 설명해 불필요한 경고를 피합니다.
 3. **나쁨·개선 필요 지표**: 어느 페이지·기기의 어떤 지표인지, 표본이 작으면 그렇다고 명시. Lighthouse 제안 중 관련 있는 것을 "가능한 원인(추정)"으로 연결.
 4. **SEO 상태**: 페이지별 SEO 점수와 미통과 항목. 이전과 달라졌거나 미통과 항목이 있을 때만 길게, 문제없으면 한 줄.
 5. **표본·측정 한계**: 판단을 보류한 부분, 건너뛴 항목과 이유.
@@ -284,7 +323,7 @@ jq '{
 ### 5-1. 실행 순서 (반드시 이 순서)
 
 1. 측정 기준 날짜 계산 (1번)
-2. PostHog 수집 (2번)
+2. PostHog 수집 (2번, **2-2~2-5 쿼리를 모두 실행**합니다. 표본 규칙으로 화면에서 생략하더라도 쿼리는 먼저 실행해 결과를 확인합니다) 그리고 1-1 배포 이력 조회
 3. Lighthouse 수집 (3번, 키가 없으면 건너뜀)
 4. 코멘트 작성 (4번)
 5. **Artifact 대시보드 발행** — `dataviz` skill을 로드한 뒤 Artifact 도구를 호출합니다. 도구가 바로 보이지 않으면 `ToolSearch`로 `select:Artifact`를 먼저 로드하세요(PostHog 도구처럼 지연 로드될 수 있습니다). **이 단계를 생략하지 마세요.**
@@ -309,13 +348,16 @@ jq '{
    - 실사용(PostHog): 이번 구간 `MM/DD ~ MM/DD (7일)` · 직전 구간 · 어제 · "완료된 날짜 기준, 실시간 아님" · 봇 제외
    - Lighthouse: 측정 시각 · 모바일 시뮬레이션 · 페이지당 1회 · 구글 서버
    - 구글 사용자 데이터: 최근 28일 (있을 때만)
+   - 운영 배포: 최근 14일 안의 배포 최대 3개 `MM/DD HH:MM · 태그 · 한 줄 요약` (확인불가면 그 사실)
+   - 합성 접속 제외: "Lighthouse 가상 기기·폭 500px 이하 데스크톱 제외"
 3. **핵심 지표 타일 4개 (LCP · FCP · INP · CLS)**: 각 타일에 이번 구간 전체 p75, **등급 칩**(텍스트 `좋음`/`개선 필요`/`나쁨` + 색, 색만으로 구분하지 않음), 직전 구간 대비 증감(▲▼ %), 어제 값, 표본 수. 표본 10건 미만이면 "참고용" 표시.
-4. **코멘트**: 4번 규칙의 bullet를 소제목(총평 / 변화 / 주의 / SEO / 한계 / 다음에 볼 것)으로 나눠 짧게.
-5. **페이지별 실사용 표**: LCP·FCP·INP·CLS(등급 칩 + 값 + 표본 수), 직전 구간 LCP·INP. 제외한 페이지는 표 아래 한 줄로 알립니다.
-6. **기기별 표**, 그리고 **지역별**은 `<details>`로 접어 둡니다(표본 규칙 2-8 적용).
-7. **Lighthouse 카드 3개 (홈 / 상품 상세 / 스토어 상세)**: 성능·SEO 점수, FCP·LCP·TBT·CLS, 개선 제안 상위 3개, SEO 미통과 항목. 페이지를 건너뛰었으면 카드에 "확인불가 (이유)".
-8. **구글 실사용 데이터(CrUX)**: 데이터가 있을 때만 카드로 표시하고, 없으면 섹션 자체를 생략합니다.
-9. **부록 (`<details>`로 접음)**: 판정 기준표(2-7)와 점검 범위·한계(0번).
+4. **배포 전후 카드 (조건부)**: 1-1 조건을 만족할 때만. 배포 시각, `배포 전 7일` vs `배포 후 ~ 점검 시각`의 LCP·FCP·INP·CLS p75와 표본 수를 2열로 비교하고 "실시간 구간, 표본 작으면 참고용"을 명시. 조건을 만족하지 않으면 카드를 만들지 않습니다.
+5. **코멘트**: 4번 규칙의 bullet를 소제목(총평 / 변화 / 주의 / SEO / 한계 / 다음에 볼 것)으로 나눠 짧게.
+6. **페이지별 실사용**: **폰에서 한 화면에 다 보이도록 표 대신 페이지별 카드**로 만듭니다(7열 표는 가로로 잘려 읽기 어렵습니다). 카드 하나 = 페이지 경로 + 2×2 지표 칸(LCP·FCP·INP·CLS, 각각 등급 칩 + 값 + 표본 수) + 한 줄 `직전 구간 LCP ○○ · INP ○○`. 표본이 많은 순으로 정렬하고, 제외한 페이지는 목록 아래 한 줄로 알립니다.
+7. **기기별**(OS별 카드 또는 3열 이내 표)과 **지역별**은 `<details>`로 접어 둡니다(표본 규칙 2-8 적용). 폭을 넘는 표가 불가피하면 첫 열을 고정하고 오른쪽에 "→ 스크롤" 안내를 붙입니다.
+8. **Lighthouse 카드 3개 (홈 / 상품 상세 / 스토어 상세)**: 성능·SEO 점수, FCP·LCP·TBT·CLS, 개선 제안 상위 3개, SEO 미통과 항목. 페이지를 건너뛰었으면 카드에 "확인불가 (이유)".
+9. **구글 실사용 데이터(CrUX)**: 데이터가 있을 때만 카드로 표시하고, 없으면 섹션 자체를 생략합니다.
+10. **부록 (`<details>`로 접음)**: 판정 기준표(2-7)와 점검 범위·한계(0번).
 
 스타일 규칙: 숫자는 `tabular-nums`, 표본 수는 흐린 보조 텍스트, 라이트/다크 모두 대응, 외부 라이브러리·이미지 없음, 개별 사용자 정보 없음, 날짜는 모두 `MM/DD` 한국 시간.
 
@@ -331,6 +373,7 @@ jq로 아래 구조의 payload를 만들어 루틴 프롬프트의 웹훅 URL로
     description: "1줄 핵심 요약 (예: 실사용 속도 대체로 양호 · 모바일 반응 속도(INP)만 확인 필요)",
     fields: [
       { name: "🗓️ 측정 기준", value: "실사용 {D7 MM/DD}~{D1 MM/DD}(7일, 완료된 날짜 기준·실시간 아님) vs 직전 7일 · 어제 {D1 MM/DD}\nLighthouse {NOW_KST} 1회 측정(모바일)", inline: false },
+      { name: "🚀 운영 배포", value: "최근 14일 배포 최대 3줄 `MM/DD HH:MM · v태그 · 요약` + 배포 전후 한 줄(조건 충족 시). 확인불가면 \"배포 이력 확인불가\"", inline: false },
       { name: "⚡ 실사용 속도 · 이번 7일 p75", value: "핵심 페이지 3~4줄. 예) 🟢 홈 · LCP 1.7초 · INP 448ms🟡 (표본 6, 참고용)", inline: false },
       { name: "📱 기기별", value: "iOS · Android 한 줄씩 (표본 부족이면 생략 사유)", inline: false },
       { name: "🔦 Lighthouse · 모바일 (참고용)", value: "홈 성능 N · SEO N / 상품 성능 N · SEO N / 스토어 성능 N · SEO N (확인불가면 이유)", inline: false },
