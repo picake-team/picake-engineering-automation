@@ -15,6 +15,7 @@ Picake의 Claude 클라우드 루틴과 운영 자동화 스킬을 모아 둔 �
 | ------------------------------------- | ------------------------------------------------------------------- |
 | `.claude/skills/picake-infra-monitor` | EC2 인프라 상태·AWS 비용 점검 (루틴: Picake 인프라 모니터링)        |
 | `.claude/skills/picake-data-report`   | PostHog + 관리자 통계 종합 리포트 (루틴: Picake 일일 데이터 리포트) |
+| `.claude/skills/picake-web-performance` | web-user 실사용 웹 바이탈(PostHog) + Lighthouse 점검 (루틴: Picake 웹 성능 점검) |
 | `routines/`                           | 루틴별 스케줄·설정·프롬프트 원문 (비밀값은 자리표시자)              |
 
 ## 루틴 동작 방식
