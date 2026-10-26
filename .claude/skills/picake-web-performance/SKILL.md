@@ -50,24 +50,28 @@ NOW_KST=$(date '+%Y-%m-%d %H:%M')     # 점검 시각
 
 ### 1-1. 최근 운영 배포 이력과 배포 전후 비교 (자동 조회, 실패해도 계속 진행)
 
-날짜 단위 구간만 보면 "이 값이 배포 전 코드의 값인지 후의 값인지" 알 수 없습니다. 웹 레포는 공개라서 **인증 없이** 공개 GitHub API로 운영 배포 이력을 읽을 수 있습니다. 호출이 실패하거나 한도에 걸리면 "배포 이력 확인불가"로 적고 이 단계만 건너뜁니다.
+날짜 단위 구간만 보면 "이 값이 배포 전 코드의 값인지 후의 값인지" 알 수 없습니다. 웹 레포(`picake-engineering-web`)는 공개 레포라서 **git으로 태그를 받아** 운영 배포 이력을 읽습니다.
+
+> **GitHub API(`api.github.com`)와 태그 피드(`tags.atom`)는 클라우드 루틴 환경에서 403으로 막혀 있어 쓰지 않습니다.** (진단으로 확인: `git ls-remote`·`git fetch`만 동작) 호출이 실패하면 "배포 이력 확인불가"로 적고 이 단계만 건너뜁니다.
 
 ```bash
-API=https://api.github.com/repos/picake-team/picake-engineering-web
-# 최근 성공한 운영 배포 (created_at은 UTC)
-curl -s -m 30 "$API/actions/workflows/deploy-web.yml/runs?per_page=30" \
-  | jq -r '.workflow_runs[] | select(.conclusion=="success" and (.head_branch|startswith("web-user/production-"))) | "\(.created_at) \(.head_branch)"' | head -5
-# 각 태그의 변경 요약(주석 태그 메시지 첫 줄)
-SHA=$(curl -s "$API/git/ref/tags/$TAG" | jq -r '.object.sha')
-curl -s "$API/git/tags/$SHA" | jq -r '.message' | head -1
+REPO=https://github.com/picake-team/picake-engineering-web.git
+# 1) 최신 운영 태그 이름 5개 (버전 순)
+TAGS=$(git ls-remote --tags --refs "$REPO" 'refs/tags/web-user/production-v*' \
+  | sed 's#.*refs/tags/##' | sort -V | tail -5)
+# 2) 태그 객체만 받아 배포 시각(unix)·요약(첫 줄) 읽기
+rm -rf /tmp/rel && mkdir -p /tmp/rel && cd /tmp/rel && git init -q
+echo "$TAGS" | while read -r T; do git fetch -q --depth=1 "$REPO" tag "$T"; done
+git for-each-ref --format='%(taggerdate:unix)|%(refname:short)|%(contents:subject)' 'refs/tags/web-user/production-*' | sort -t'|' -k1 -n
+# unix 시각 → KST: TZ=Asia/Seoul date -d "@<unix>" '+%m/%d %H:%M'
 ```
 
-- 시각은 KST `MM/DD HH:MM`으로 바꿔 적습니다. **점검 시각 기준 최근 14일의 운영 배포만 최대 5개** 보여 줍니다.
+- 시각은 KST `MM/DD HH:MM`으로 바꿔 적습니다(태그 시각 = 배포 직후 시각이라 몇 분 이내 오차). **점검 시각 기준 최근 14일의 운영 배포만 최대 5개** 보여 줍니다. 주석 태그가 아닌 가벼운 태그라 시각이 없으면 "시각 확인불가"로 적습니다.
 - 이번 구간 안에 운영 배포가 있으면, 구간 값에는 **배포 전 값이 섞여 있음**을 코멘트에 반드시 적습니다.
 
 **배포 전후 비교** — 가장 최근 운영 배포가 14일 이내이고 배포 후 6시간 이상 지났을 때만 합니다.
 
-- `{DEPLOY_UTC}` = 그 배포의 `created_at`(`YYYY-MM-DD HH:MM:SS`, UTC).
+- `{DEPLOY_UTC}` = 그 배포 태그 시각(`%(taggerdate:unix)`)을 UTC `YYYY-MM-DD HH:MM:SS`로 바꾼 값(`date -u -d "@<unix>" '+%F %T'`).
 - 2-2 전체 p75 쿼리를 두 번 실행합니다. 배포 전 `[DEPLOY_UTC − 7일, DEPLOY_UTC)`, 배포 후 `[DEPLOY_UTC, 지금)`. 기간 조건은 `toDateTime('...', 'UTC')`로 넣고 나머지 필터(합성 접속 제외 포함)는 그대로 둡니다.
 - 이 비교만 예외로 **날짜 단위가 아니라 "배포 후 ~ 점검 시각"의 실시간 구간**입니다. 리포트에 그렇게 명시합니다.
 - 지표별 배포 후 표본이 3건 미만이면 "배포 후 표본 부족, 다음 리포트에서 다시"로 적고 비교하지 않습니다. 10건 미만이면 참고용입니다.
