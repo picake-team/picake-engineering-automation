@@ -202,6 +202,8 @@ check_http() { curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 10 "htt
 
 ## 7. 리포트 형식
 
+**시각은 모두 한국 시간(KST)으로 표기합니다.** AWS(CloudWatch·Cost Explorer)와 서버 로그는 UTC로 나오므로 리포트에 옮길 때 KST로 바꾸고, 점검 시각(`TZ=Asia/Seoul date '+%Y-%m-%d %H:%M'`)을 리포트 맨 위에 적습니다. 비용은 Cost Explorer 특성상 최대 하루 지연되므로 "어제까지 확정된 값"임을 명시합니다.
+
 staging/production 상태는 아래 배지 기준으로 표시하세요.
 
 | 항목                | ✅               | ⚠️                  | ❌                       |

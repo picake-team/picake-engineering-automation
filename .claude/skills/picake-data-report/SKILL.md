@@ -16,7 +16,28 @@ Picake의 데이터는 두 곳에 나뉘어 있습니다. **행동 데이터(페
 - **환경**: `production`(`https://api.picakes.com`) 또는 `staging`(`https://api-staging.picakes.com`). 언급 없으면 production 기준으로 진행. 사용자가 명확히 밝히지 않으면 두 환경 중 어디를 보여줄지, DB 통계는 관리자 토큰이 필요하다는 점을 먼저 물어봐도 됩니다.
   - **중요**: 여기서 고른 환경은 DB API의 base URL뿐 아니라 아래 1번의 PostHog `environment` 속성 필터에도 그대로 써야 합니다. 두 값이 어긋나면(예: production DB + 필터 없는 PostHog) 서로 다른 환경 데이터를 비교하는 리포트가 됩니다.
   - **출력 범위**: 사용자가 특정 환경(예: production)을 요청했다면 최종 리포트(채팅 요약 + 대시보드 Artifact 모두)는 그 환경만 다룹니다. 다른 환경의 이벤트 수·페이지뷰 수 등 구체적 수치나 이름(staging/development)을 리포트에 언급하지 마세요 — 원인 조사 과정에서 다른 환경 데이터를 내부적으로 대조해봤더라도, 사용자가 명시적으로 여러 환경 비교를 요청한 게 아니라면 결과물에는 넣지 않습니다.
-- **기간**: 일별 추이는 기본 최근 30일.
+- **기간·시간대 (모든 숫자의 기준, 가장 먼저 정하고 리포트에 적습니다)**: **한국 시간(KST), 어제까지 완료된 날짜**로 통일합니다. 오늘은 아직 끝나지 않았으므로 제외합니다(자동 실행은 09시라 오늘은 9시간뿐입니다). 실행 환경은 리눅스입니다.
+
+  ```bash
+  export TZ=Asia/Seoul
+  TODAY=$(date +%F)                     # 실행일
+  D1=$(date -d "$TODAY -1 day" +%F)     # 어제 (집계에 포함되는 마지막 날)
+  D7=$(date -d "$TODAY -7 day" +%F)     # 최근 7일 시작일
+  D30=$(date -d "$TODAY -30 day" +%F)   # 최근 30일 시작일
+  NOW_KST=$(date '+%Y-%m-%d %H:%M')     # 점검 시각
+  ```
+
+  | 구간 | 날짜 범위 (KST 00:00 경계, 시작 포함·끝 제외) |
+  | --- | --- |
+  | 어제 | `D1` ~ `TODAY` (1일) |
+  | 최근 7일 | `D7` ~ `TODAY` (완료된 7일) |
+  | 최근 30일 | `D30` ~ `TODAY` (완료된 30일) |
+
+  - **PostHog**: 모든 기간 조건은 `toDateTime('YYYY-MM-DD 00:00:00', 'Asia/Seoul')`로 넣습니다. 일별 집계는 `toDate(toTimeZone(timestamp, 'Asia/Seoul'))`로 묶습니다. **PostHog 프로젝트 시간대는 UTC라서 기본 `toDate(timestamp)`는 UTC 날짜(= KST 09:00 경계)입니다. 그대로 쓰면 "10/25"가 KST 10/25 09:00 ~ 10/26 09:00이 되어 다른 리포트와 하루가 9시간 어긋납니다.** 또 `now() - INTERVAL 1 DAY` 같은 **롤링 구간은 쓰지 않습니다**(실행 시각에 따라 값이 달라집니다).
+  - **활성 사용자**: DAU = 어제 고유 방문자, WAU = 최근 7일 고유 방문자, MAU = 최근 30일 고유 방문자(위 구간에서 `uniq(distinct_id)`).
+  - **DB 신규 건수**(가입·스토어·입점요청·주문): **`daily-trends`(Asia/Seoul)로 구간을 직접 합산**합니다. `startDate=D30&endDate=D1`로 한 번 받아 어제 / 최근 7일 / 최근 30일을 계산하세요. 통계 API의 `today`·`last7Days`·`last30Days` 필드는 **오늘(부분)을 포함한 서울 달력일 구간**(`last7Days` = 오늘 포함 7일)이라 위 구간과 맞지 않고 09시에는 오늘이 9시간뿐이라 쓰지 않습니다. 누적(`total`, `withdrawn`, `gmv`, `byStatus`)은 그대로 씁니다.
+  - **"오늘"이라는 표현은 리포트에 쓰지 않습니다.** "어제(MM/DD)"를 씁니다.
+  - 리포트 맨 위(Artifact 헤더·Discord 필드)에 **집계 기준**을 반드시 적습니다: `한국 시간(KST) · 어제 MM/DD까지 완료된 일자 · 점검 시각 {NOW_KST}`. 이번 7일/30일의 날짜 범위(`MM/DD ~ MM/DD`)도 함께 적습니다.
 - 특정 카테고리만 요청한 경우(예: "회원가입 전환율만") 해당 섹션만 조회해도 됩니다.
 
 ## 1. PostHog 데이터 수집
@@ -63,7 +84,7 @@ NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (propertie
 
 ### 기본 제품 분석 지표 (PostHog 기본 기능)
 
-- 활성 사용자: DAU / WAU / MAU (고유 사용자 수 트렌드)
+- 활성 사용자: DAU / WAU / MAU — 정의는 0번 "기간·시간대"를 따릅니다(어제 / 최근 7일 / 최근 30일의 KST 완료 일자 고유 방문자)
 - `$pageview` 총 건수, 신규 vs 재방문 사용자 비율
 - 이미 PostHog에 저장된 Insight/Dashboard가 있다면 함께 조회해서 보여주세요 (팀이 이미 만들어둔 지표를 놓치지 않기 위함) — `insight`/`dashboard` 도메인 조회.
 
@@ -88,6 +109,7 @@ NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (propertie
 
 - 조회 방법: `system.insights`에서 `short_id`로 쿼리 정의를 가져오거나(`insight` 관련 도구로 `retrieve`), 이름으로 검색해도 됩니다. short_id는 UI가 바뀌어도 안정적이니 우선 사용하세요.
 - **환경 필터는 저장된 정의에 없을 수 있습니다.** 위 "환경 필터링" 규칙이 여기에도 그대로 적용됩니다 — 원본 그대로 인용하지 말고, 쿼리 정의를 가져온 뒤 `environment` 속성 필터를 추가해 선택된 환경으로 재실행하세요.
+- **기간도 저장된 정의 그대로 쓰지 않습니다.** 저장된 Insight의 기간(롤링 N일·UTC 기준)을 0번의 구간(KST 완료 일자)으로 바꿔서 재실행합니다.
 - short_id가 바뀌었거나 삭제된 Insight가 있으면 조용히 건너뛰지 말고 이름으로 다시 찾아보고, 그래도 없으면 사용자에게 알리세요.
 
 ### 커스텀 이벤트 기반 전환 퍼널 (팀이 추가한 기능)
@@ -166,7 +188,7 @@ NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (propertie
 
 1. `dataviz` skill을 먼저 로드해서 카드/스탯 타일/차트 스타일 가이드를 따르세요.
 2. Artifact(HTML)로 대시보드를 렌더링합니다. 섹션 구성:
-   - ① 회원/가입 현황 (구매자·판매자 총계, 오늘/7일/30일 신규, 탈퇴)
+   - ① 회원/가입 현황 (구매자·판매자 총계, 어제/최근 7일/최근 30일 신규(daily-trends 합산), 탈퇴)
    - ② 주문·매출 (총 주문 수, GMV, 상태별 건수)
    - ③ 스토어·입점 현황 (스토어 총계, 사업자 인증 완료, 입점 요청)
    - ④ PostHog 행동 지표 (DAU/WAU/MAU, pageview) 및 전환 퍼널
@@ -200,18 +222,19 @@ NOT (properties.$raw_user_agent LIKE '%moto g power (2022)%') AND NOT (propertie
     color: (특이사항 없으면 5763719 초록, 있으면 15105570 주황),
     description: "1줄 핵심 요약 (예: 구매자 X명·주문 Y건·특이사항 없음)",
     fields: [
-      { name: "👥 구매자", value: "총 N · 오늘 +N", inline: true },
-      { name: "🏪 판매자", value: "총 N · 오늘 +N", inline: true },
+      { name: "🗓️ 집계 기준", value: "한국 시간(KST) · 어제 {D1 MM/DD}까지 완료된 일자 · 최근 7일 {D7 MM/DD}~{D1 MM/DD} · 점검 {NOW_KST}", inline: false },
+      { name: "👥 구매자", value: "총 N · 어제 +N", inline: true },
+      { name: "🏪 판매자", value: "총 N · 어제 +N", inline: true },
       { name: "📦 주문", value: "총 N건 · GMV ₩N", inline: true },
       { name: "\u200b", value: "──────────────────────────────", inline: false },
       { name: "🏪 스토어", value: "총 N · 인증완료 N", inline: true },
-      { name: "📋 입점요청", value: "총 N · 오늘 +N", inline: true },
+      { name: "📋 입점요청", value: "총 N · 어제 +N", inline: true },
       { name: "👁️ PostHog", value: "DAU N · WAU N · MAU N (포함 안 됐으면 \"미포함\")", inline: true },
       { name: "\u200b", value: "──────────────────────────────", inline: false },
       { name: "🔍 추이·특이사항", value: "(2~3줄 bullet, 없으면 \"특이사항 없음\")", inline: false },
       { name: "📊 전체 대시보드", value: "[클릭해서 자세히 보기 →](ARTIFACT_URL)", inline: false }
     ],
-    footer: { text: "Picake 일일 리포트 · 매일 09:00 KST" },
+    footer: { text: "Picake 일일 리포트 · 매일 09:00 KST · 한국 시간, 어제까지 완료된 일자 기준" },
     timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
   }]
 }
