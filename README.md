@@ -5,7 +5,7 @@ Picake의 Claude 클라우드 루틴과 운영 자동화 스킬을 모아 둔 �
 | 레포                                                                                    | 내용                                                  |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | [picake-engineering-backend](https://github.com/picake-team/picake-engineering-backend) | 백엔드 API 서버                                       |
-| [picake-engineering-web](https://github.com/picake-team/picake-engineering-web)         | 웹 프론트엔드 (`web-user`, `web-seller`, `web-admin`) |
+| [picake-engineering-web](https://github.com/picake-team/picake-engineering-web)         | 웹 프론트엔드 (`web-user`, `web-seller`, `web-admin`, `web-info`) |
 | [picake-engineering-app](https://github.com/picake-team/picake-engineering-app)         | Flutter 앱                                            |
 | **picake-engineering-automation** (현재)                                                | 클라우드 루틴·운영 자동화                             |
 
@@ -14,8 +14,8 @@ Picake의 Claude 클라우드 루틴과 운영 자동화 스킬을 모아 둔 �
 | 경로                                  | 내용                                                                |
 | ------------------------------------- | ------------------------------------------------------------------- |
 | `.claude/skills/picake-infra-monitor` | EC2 인프라 상태·AWS 비용 점검 (루틴: Picake 인프라 모니터링)        |
-| `.claude/skills/picake-data-report`   | PostHog + 관리자 통계 종합 리포트 (루틴: Picake 일일 데이터 리포트) |
-| `.claude/skills/picake-web-performance` | web-user 실사용 웹 바이탈(PostHog) + Lighthouse 점검 (루틴: Picake 웹 성능 점검) |
+| `.claude/skills/picake-data-report`   | PostHog + 관리자 통계 종합 리포트. 공통 코어(`SKILL.md`) + 앱별 모듈(`apps/web-user.md`, `apps/web-info.md`) (루틴: Picake 일일 데이터 리포트) |
+| `.claude/skills/picake-web-performance` | web-user·web-info 실사용 웹 바이탈(PostHog) + Lighthouse 점검. web-info 대상 페이지는 운영 sitemap에서 읽음 (루틴: Picake 웹 성능 점검) |
 | `routines/`                           | 루틴별 스케줄·설정·프롬프트 원문 (비밀값은 자리표시자)              |
 
 ## 시간 기준 (세 루틴 공통)
