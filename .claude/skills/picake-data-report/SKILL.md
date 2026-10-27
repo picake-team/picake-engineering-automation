@@ -48,7 +48,7 @@ Picake의 데이터는 두 곳에 나뉘어 있습니다. **행동 데이터(페
 
 PostHog 프로젝트는 **development/staging/production이 하나로 공용**입니다 (`apps/web-user/.env.development`의 `NEXT_PUBLIC_POSTHOG_KEY` 주석에 "공용"이라고 명시, `NEXT_PUBLIC_POSTHOG_HOST`도 동일). 대신 `apps/web-user/src/common/config/posthog.config.ts`가 모든 이벤트에 super property `environment`(값: `production` / `staging` / `development`, `NEXT_PUBLIC_NODE_ENV`에서 옴)를 자동으로 붙이고 있어 이걸로 구분하도록 설계되어 있습니다.
 
-**게다가 이 PostHog 프로젝트(497749)는 `web-user`뿐 아니라 `web-seller`도 같이 씁니다** (`apps/web-seller/src/common/config/posthog.config.ts`도 동일한 방식으로 super property를 등록, `app: "web-seller"`). 그래서 `environment` 필터만으로는 부족하고 **`app` 필터도 항상 같이 걸어야 합니다** — 안 그러면 web-seller 트래픽이 web-user 리포트에 섞여 들어갈 수 있습니다 (2026-08-03 기준 web-seller는 아직 development 트래픽뿐이라 지금 당장은 영향 없지만, 실사용이 시작되면 바로 문제가 됩니다). `web-admin`은 PostHog 연동 자체가 없습니다(내부 툴이라 의도적으로 제외된 것으로 보임).
+**게다가 이 PostHog 프로젝트(497749)는 `web-user`뿐 아니라 `web-seller`도 같이 씁니다** (`apps/web-seller/src/common/config/posthog.config.ts`도 동일한 방식으로 super property를 등록, `app: "web-seller"`). 그래서 `environment` 필터만으로는 부족하고 **`app` 필터도 항상 같이 걸어야 합니다** — 안 그러면 web-seller 트래픽이 web-user 리포트에 섞여 들어갈 수 있습니다 (2026-08-03 기준 web-seller는 아직 development 트래픽뿐이라 지금 당장은 영향 없지만, 실사용이 시작되면 바로 문제가 됩니다). `web-admin`은 PostHog 연동 자체가 없습니다(내부 툴이라 의도적으로 제외된 것으로 보임). 정보·소개 사이트 `web-info`(`info.picakes.com`)도 같은 프로젝트를 쓰며 `app: "web-info"`로 구분되므로, 위 `app = 'web-user'` 필터가 있으면 리포트에 섞이지 않습니다. 소개 페이지 유입을 따로 보고 싶을 때만 `app = 'web-info'`로 조회하세요.
 
 **따라서 이 skill의 모든 PostHog 쿼리(query-trends, query-funnel, execute-sql 등)에는 0번에서 정한 환경으로 `properties.environment` 필터와 **`properties.app` 필터(리포트 대상이 web-user면 `"web-user"`)**를 반드시 같이 걸어야 합니다.** 필터를 빼먹으면 로컬/스테이징 테스트 트래픽이나 다른 앱(web-seller)의 트래픽이 production 숫자에 섞여 들어가고, 특히 표본이 작을 때 심하게 왜곡됩니다.
 

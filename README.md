@@ -5,7 +5,7 @@ Picake의 Claude 클라우드 루틴과 운영 자동화 스킬을 모아 둔 �
 | 레포                                                                                    | 내용                                                  |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | [picake-engineering-backend](https://github.com/picake-team/picake-engineering-backend) | 백엔드 API 서버                                       |
-| [picake-engineering-web](https://github.com/picake-team/picake-engineering-web)         | 웹 프론트엔드 (`web-user`, `web-seller`, `web-admin`) |
+| [picake-engineering-web](https://github.com/picake-team/picake-engineering-web)         | 웹 프론트엔드 (`web-user`, `web-seller`, `web-admin`, `web-info`) |
 | [picake-engineering-app](https://github.com/picake-team/picake-engineering-app)         | Flutter 앱                                            |
 | **picake-engineering-automation** (현재)                                                | 클라우드 루틴·운영 자동화                             |
 
