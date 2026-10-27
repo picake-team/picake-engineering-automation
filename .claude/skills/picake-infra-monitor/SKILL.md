@@ -196,7 +196,7 @@ check_ssl() { HOST=$1; EXP=$(echo | openssl s_client -connect "${HOST}:443" -ser
 check_http() { curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 10 "https://$1" 2>/dev/null || echo 000; }
 ```
 
-확인 대상: `api-staging.picakes.com`/`api.picakes.com`(SSL + `/health`), `staging.picakes.com`/`picakes.com`(web-user), `seller-staging.picakes.com`/`seller.picakes.com`(web-seller), `admin-staging.picakes.com`/`admin.picakes.com`(web-admin), `info-staging.picakes.com`/`info.picakes.com`(web-info — `/`는 `/seller/about`으로 리다이렉트되므로 **`/seller/about` 경로**로 확인).
+확인 대상: `api-staging.picakes.com`/`api.picakes.com`(SSL + `/health`), `staging.picakes.com`/`picakes.com`(web-user), `seller-staging.picakes.com`/`seller.picakes.com`(web-seller), `admin-staging.picakes.com`/`admin.picakes.com`(web-admin), `info-staging.picakes.com`/`info.picakes.com`(web-info — 루트 `/`에는 페이지가 없어 404이므로 **`/seller/about` 경로**로 확인).
 
 **알려진 환경 제약 (2026-09-02 첫 실행에서 발견)**: 이 클라우드 루틴 샌드박스는 아웃바운드 TLS가 내부 프록시를 거쳐서, `openssl s_client`로 받은 인증서가 실제 도메인 인증서가 아니라 프록시 인증서로 나옵니다 — 10개 도메인 SSL 만료일이 전부 똑같이 나오면(예: 전부 "30일") 이 문제입니다. `check_http`(HTTP 상태코드)는 정상적으로 실제 서버까지 도달하므로 영향 없습니다. **SSL 만료일은 이 외부 체크 대신 1번(SSM 호스트 체크)의 `SSL_DAYS` 값(실서버 로컬 인증서 파일을 직접 읽음, 프록시 영향 없음)을 사용하세요** — api-staging/api 도메인은 이미 커버됩니다. web-user/seller/admin/info 프론트엔드(Vercel, Let's Encrypt 아님)는 SSM 대상이 아니라 SSL 만료일을 볼 방법이 없으니 그냥 건너뛰고 HTTP 상태코드만 보고하세요.
 
